@@ -173,3 +173,8 @@ for epoch in range(num_epochs):
 *   **Layer Selection:** By default, hooks are placed on `nn.Conv2d` and `nn.Linear` layers. You can modify the `sel_module` list inside `RepAlignLoss.py` to target different layer types (e.g., `nn.ReLU`, `nn.GELU` were commented out).
 *   **Group Size:** The localized similarity currently uses a hardcoded group size of `2` within the `HandleData` method. This could be parameterized in the future if needed.
 *   **Teacher Model Input:** The teacher model processes the *final output* of the student model, not its intermediate features directly. The loss guides the student to produce outputs that *look* similar to the ground truth *according to the teacher's internal representations*.
+
+## Author
+
+**Gabriel Poetsch**  
+Email: griskai.yt@gmail.com
