@@ -101,7 +101,7 @@ class RepAlignLoss(torch.nn.Module):
 
         for i in range(len(X_VAL)):
             #Eval mode, make generator deterministic.
-            if not X_VAL[i].requires_grad:
+            if not X_VAL[i].requires_grad or not torch.is_grad_enabled():
                 self.generator.manual_seed(42)
                 
 
@@ -139,18 +139,14 @@ if __name__ == "__main__":
         gt_data = loss_func.MakeData(gt)
 
     #Calculate loss
-
-    #Training with random pairs. Loss Changes.
+    #Training with random pairs make the loss change with the same data.
     for _ in range(3):
         loss = loss_func(output_data, gt_data)
         print("Training with random pairs:", loss.item())
     
     
-    with torch.no_grad():
-        output_data = loss_func.MakeData(model_output)
-        gt_data = loss_func.MakeData(gt)
-
     #Eval with random pairs. Loss does not change.
     for _ in range(3):
-        loss = loss_func(output_data, gt_data)
+        with torch.no_grad():
+            loss = loss_func(output_data, gt_data)
         print("Eval with random pairs:", loss.item())
