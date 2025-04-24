@@ -121,11 +121,20 @@ class RepAlignLoss(torch.nn.Module):
 if __name__ == "__main__":
     device = torch.device("cpu")
 
-    #Select a teacher and tensor transformations before feeding to the teacher.
-    teacher = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg').to(device).eval()
+    try:
+        from transformers import Dinov2Model
+        print("Transformers is installed. Using webssl-dino300m-full2b-224")
+        teacher  = Dinov2Model.from_pretrained('facebook/webssl-dino300m-full2b-224').to(device).eval()
+    except ImportError:
+        print("Transformers not installed. Using facebookresearch/dinov2")
+        teacher = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg').to(device).eval()
+
     norm = transforms.Compose([
+            transforms.Resize((224, 224)),
             transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ])
+
+    
     
     loss_func = RepAlignLoss(teacher, norm, device, randomize_pairs=True, use_weight=False, verbose=True).to(device)
 
