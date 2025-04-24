@@ -5,11 +5,14 @@ import torchvision.transforms as transforms
 import math
 
 class RepAlignLoss(torch.nn.Module):
-    def __init__(self, sel_model, normalize, device=None, use_weight=False, verbose=True):
+    def __init__(self, sel_model, normalize, device=None, randomize_pairs=True, use_weight=False, verbose=True):
         super().__init__()
         self.model = sel_model
         self.normalize = normalize
         self.use_weight = use_weight
+        self.randomize_pairs = randomize_pairs
+        self.device = device
+        self.generator = torch.Generator(device=device)
 
         self.activations = []
         def getActivation():
@@ -49,17 +52,17 @@ class RepAlignLoss(torch.nn.Module):
         Y_VAL = self.activations
         return Y_VAL
 
-    def HandleTensor(self, x, head=32):
+    def HandleTensor(self, x, head=2):
         pad = (head - (x.shape[-1] % head)) % head
         x = F.pad(x, (0, pad))
-        x = x.reshape(x.size(0), x.size(1),  x.size(2) // head, head)
+        x = x.reshape(x.size(0), -1, head)
         return x
 
     def CalculateLoss(self, x, y, heads):
         x = self.HandleTensor(x, heads)
         y = self.HandleTensor(y, heads)
-        x = nn.functional.normalize(x, p=2.0, dim=-1)
-        y = nn.functional.normalize(y, p=2.0, dim=-1)
+        x = nn.functional.softmax(x, dim=-1)
+        y = nn.functional.softmax(y, dim=-1)
         loss = nn.functional.mse_loss(x, y.detach(), reduction="none")
         return loss.sum(), loss.numel()
         
@@ -68,8 +71,18 @@ class RepAlignLoss(torch.nn.Module):
         loss = 0
         elements = 0
 
-        x = x.view(x.size(0), x.size(1), -1)
-        y = y.view(y.size(0), y.size(1), -1)
+        if self.randomize_pairs:
+            x = x.view(x.size(0), -1)
+            y = y.view(y.size(0), -1)
+            perm = torch.randperm(x.size(-1), device=x.device, generator=self.generator)
+            x = x[:,  perm]
+            y = y[:,  perm]
+        else:
+            if x.ndim > 3:
+                x = x.view(x.size(0), x.size(1), -1)
+                y = y.view(y.size(0), y.size(1), -1)
+                x = x.transpose(1, 2)
+                y = y.transpose(1, 2)
 
         l, e = self.CalculateLoss(x, y, 2)
 
@@ -87,6 +100,11 @@ class RepAlignLoss(torch.nn.Module):
         total_weight = sum(weights)
 
         for i in range(len(X_VAL)):
+            #Eval mode, make generator deterministic.
+            if not X_VAL[i].requires_grad:
+                self.generator.manual_seed(42)
+                
+
             l, s  =  self.HandleData(X_VAL[i], Y_VAL[i]) 
             
             #Optional weight
@@ -109,10 +127,10 @@ if __name__ == "__main__":
             transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ])
     
-    loss_func = RepAlignLoss(teacher, norm, device, use_weight=False, verbose=True).to(device)
+    loss_func = RepAlignLoss(teacher, norm, device, randomize_pairs=True, use_weight=False, verbose=True).to(device)
 
     #Since the teacher is dino V2, we need to feed it tensors [B,3,H,W] tensor with 14X14 patches.
-    model_output = torch.randn(1, 3, 140, 140).to(device)
+    model_output = torch.randn(1, 3, 140, 140, requires_grad=True).to(device)
     gt = torch.randn(1, 3, 140, 140).to(device)
 
     #Feed both tensors to DinoV2 and store each layer data.
@@ -121,5 +139,18 @@ if __name__ == "__main__":
         gt_data = loss_func.MakeData(gt)
 
     #Calculate loss
-    loss = loss_func(output_data, gt_data)
-    print(loss.item())
+
+    #Training with random pairs. Loss Changes.
+    for _ in range(3):
+        loss = loss_func(output_data, gt_data)
+        print("Training with random pairs:", loss.item())
+    
+    
+    with torch.no_grad():
+        output_data = loss_func.MakeData(model_output)
+        gt_data = loss_func.MakeData(gt)
+
+    #Eval with random pairs. Loss does not change.
+    for _ in range(3):
+        loss = loss_func(output_data, gt_data)
+        print("Eval with random pairs:", loss.item())
