@@ -61,6 +61,7 @@ class RepAlignLoss(torch.nn.Module):
     def CalculateLoss(self, x, y, heads):
         x = self.HandleTensor(x, heads)
         y = self.HandleTensor(y, heads)
+
         #x = nn.functional.softmax(x, dim=-1)
         #y = nn.functional.softmax(y, dim=-1)
         #loss = nn.functional.mse_loss(x, y.detach(), reduction="none")
@@ -72,18 +73,15 @@ class RepAlignLoss(torch.nn.Module):
         loss = 0
         elements = 0
 
+        if x.ndim > 3:
+            x = x.view(x.size(0), x.size(1), -1)
+            y = y.view(y.size(0), y.size(1), -1)
+            
         if self.randomize_pairs:
-            x = x.view(x.size(0), -1)
-            y = y.view(y.size(0), -1)
             perm = torch.randperm(x.size(-1), device=x.device, generator=self.generator)
-            x = x[:,  perm]
-            y = y[:,  perm]
-        else:
-            if x.ndim > 3:
-                x = x.view(x.size(0), x.size(1), -1)
-                y = y.view(y.size(0), y.size(1), -1)
-                x = x.transpose(1, 2)
-                y = y.transpose(1, 2)
+            x = x[...,  perm]
+            y = y[...,  perm]
+
 
         l, e = self.CalculateLoss(x, y, 2)
 
