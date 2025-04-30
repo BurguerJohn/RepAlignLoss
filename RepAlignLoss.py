@@ -61,9 +61,10 @@ class RepAlignLoss(torch.nn.Module):
     def CalculateLoss(self, x, y, heads):
         x = self.HandleTensor(x, heads)
         y = self.HandleTensor(y, heads)
-        x = nn.functional.softmax(x, dim=-1)
-        y = nn.functional.softmax(y, dim=-1)
-        loss = nn.functional.mse_loss(x, y.detach(), reduction="none")
+        #x = nn.functional.softmax(x, dim=-1)
+        #y = nn.functional.softmax(y, dim=-1)
+        #loss = nn.functional.mse_loss(x, y.detach(), reduction="none")
+        loss = (1 - torch.nn.functional.cosine_similarity(x, y.detach(), dim=-1)).pow(2)
         return loss.sum(), loss.numel()
         
 
