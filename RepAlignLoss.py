@@ -100,7 +100,8 @@ class RepAlignLoss(torch.nn.Module):
         elements = 0
         
         #Improve, no need to calculate each loop.
-        weights = [math.exp(i * 0.1) for i in range(len(X_VAL))]
+        #weights = [math.exp(i * 0.1) for i in range(len(X_VAL))]
+        weights = [i + 1 for i in range(len(X_VAL))]
         total_weight = sum(weights)
 
         for i in range(len(X_VAL)):
