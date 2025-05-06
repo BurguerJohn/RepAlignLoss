@@ -65,7 +65,12 @@ class RepAlignLoss(torch.nn.Module):
         #x = nn.functional.softmax(x, dim=-1)
         #y = nn.functional.softmax(y, dim=-1)
         #loss = nn.functional.mse_loss(x, y.detach(), reduction="none")
-        loss = (1 - torch.nn.functional.cosine_similarity(x, y.detach(), dim=-1)).pow(2)
+        #loss = (1 - torch.nn.functional.cosine_similarity(x, y.detach(), dim=-1)).pow(2)
+        
+        x = F.normalize(x, dim=-1)
+        y = F.normalize(y, dim=-1)
+        loss = nn.functional.l1_loss(x, y.detach(), reduction="none")
+
         return loss.sum(), loss.numel()
         
 
