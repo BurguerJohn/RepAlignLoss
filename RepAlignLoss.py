@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.transforms as transforms
+import torchvision
 import math
 
 class RepAlignLoss(torch.nn.Module):
@@ -25,6 +25,9 @@ class RepAlignLoss(torch.nn.Module):
             param.requires_grad_(False)
 
         count = 0
+
+        #Can also use more layers or all of them
+
         #sel_module = [nn.Linear, nn.Conv2d, nn.ReLU, nn.GELU]
         sel_module = [nn.Linear, nn.Conv2d]
         use_all_layers = False
@@ -100,6 +103,7 @@ class RepAlignLoss(torch.nn.Module):
         elements = 0
         
         #Improve, no need to calculate each loop.
+        #Other option is use exp weights
         #weights = [math.exp(i * 0.1) for i in range(len(X_VAL))]
         weights = [i + 1 for i in range(len(X_VAL))]
         total_weight = sum(weights)
@@ -123,24 +127,51 @@ class RepAlignLoss(torch.nn.Module):
         return loss / elements
 
 
+
+_ALL_MODELS = ["dinov2_vits14_reg", "webssl-dino300m-full2b-224", "PE-Core-B16-224"]
+_SELECTED_MODEL = 0
+
 if __name__ == "__main__":
     device = torch.device("cpu")
 
-    try:
+    if _SELECTED_MODEL == 0:
+        #https://github.com/facebookresearch/dinov2
+        print("Transformers not installed. Using facebookresearch/dinov2")
+        teacher = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg').to(device).eval()
+        norm = torchvision.transforms.Compose([
+            torchvision.transforms.Resize((224, 224)),
+            torchvision.transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        ])
+
+    if _SELECTED_MODEL == 1:
+        #https://huggingface.co/facebook/webssl-dino300m-full2b-224
         from transformers import Dinov2Model
         print("Transformers is installed. Using webssl-dino300m-full2b-224")
         teacher  = Dinov2Model.from_pretrained('facebook/webssl-dino300m-full2b-224').to(device).eval()
-    except ImportError:
-        print("Transformers not installed. Using facebookresearch/dinov2")
-        teacher = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg').to(device).eval()
-
-    norm = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        norm = torchvision.transforms.Compose([
+            torchvision.transforms.Resize((224, 224)),
+            torchvision.transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ])
 
-    
-    
+    if _SELECTED_MODEL == 2:
+        #https://github.com/facebookresearch/perception_models
+        import os, sys
+        perception_models_path = os.path.abspath('./perception_models')
+        sys.path.append(perception_models_path)
+        os.chdir(perception_models_path)
+        import core.vision_encoder.pe as pe
+        import core.vision_encoder.transforms as transforms
+
+        teacher = pe.CLIP.from_config("PE-Core-B16-224", pretrained=True).to(device).eval()
+
+        norm = torchvision.transforms.Compose([
+            torchvision.transforms.Resize((224, 224)),
+            torchvision.transforms.Normalize(mean=.5, std=.5),
+        ])
+
+        
+
+
     loss_func = RepAlignLoss(teacher, norm, device, randomize_pairs=True, use_weight=False, verbose=True).to(device)
 
     #Since the teacher is dino V2, we need to feed it tensors [B,3,H,W] tensor with 14X14 patches.
