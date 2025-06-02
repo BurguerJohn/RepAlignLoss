@@ -61,6 +61,22 @@ class RepAlignLoss(torch.nn.Module):
         x = x.reshape(x.size(0), -1, head)
         return x
 
+    def l2_normalize_groups(self, x: torch.Tensor, y: torch.Tensor, eps: float = 1e-8) -> tuple[torch.Tensor, torch.Tensor]:
+                      
+        # Calculate sum of squares for elements in x and y per group
+        # x_sq_sum and y_sq_sum will have shape (num_groups, 1)
+        x_sq_sum = x.pow(2).sum(dim=-1, keepdim=True)
+        y_sq_sum = y.pow(2).sum(dim=-1, keepdim=True)
+    
+        # Total sum of squares for the 4 elements in each group
+        group_sum_sq = x_sq_sum + y_sq_sum
+        group_norm = torch.sqrt(group_sum_sq)
+    
+        x_normalized = x / (group_norm + eps)
+        y_normalized = y / (group_norm + eps)
+    
+        return x_normalized, y_normalized
+    
     def CalculateLoss(self, x, y, heads):
         x = self.HandleTensor(x, heads)
         y = self.HandleTensor(y, heads)
@@ -70,9 +86,12 @@ class RepAlignLoss(torch.nn.Module):
         #loss = nn.functional.mse_loss(x, y.detach(), reduction="none")
         #loss = (1 - torch.nn.functional.cosine_similarity(x, y.detach(), dim=-1)).pow(2)
         
-        x = F.normalize(x, dim=-1)
-        y = F.normalize(y, dim=-1)
-        loss = nn.functional.l1_loss(x, y.detach(), reduction="none")
+        #x = F.normalize(x, dim=-1)
+        #y = F.normalize(y, dim=-1)
+
+        x, y = self.l2_normalize_groups(x, y)
+
+        loss = nn.functional.mse_loss(x, y.detach(), reduction="none")
 
         return loss.sum(), loss.numel()
         
@@ -128,7 +147,7 @@ class RepAlignLoss(torch.nn.Module):
 
 
 
-_ALL_MODELS = ["dinov2_vits14_reg", "webssl-dino300m-full2b-224", "PE-Core-B16-224"]
+_ALL_MODELS = ["dinov2_vits14_reg", "webssl-dino300m-full2b-224", "PE-Core-B16-224", "VGG19"]
 _SELECTED_MODEL = 0
 
 if __name__ == "__main__":
@@ -136,7 +155,6 @@ if __name__ == "__main__":
 
     if _SELECTED_MODEL == 0:
         #https://github.com/facebookresearch/dinov2
-        print("Transformers not installed. Using facebookresearch/dinov2")
         teacher = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg').to(device).eval()
         norm = torchvision.transforms.Compose([
             torchvision.transforms.Resize((224, 224)),
@@ -146,7 +164,6 @@ if __name__ == "__main__":
     if _SELECTED_MODEL == 1:
         #https://huggingface.co/facebook/webssl-dino300m-full2b-224
         from transformers import Dinov2Model
-        print("Transformers is installed. Using webssl-dino300m-full2b-224")
         teacher  = Dinov2Model.from_pretrained('facebook/webssl-dino300m-full2b-224').to(device).eval()
         norm = torchvision.transforms.Compose([
             torchvision.transforms.Resize((224, 224)),
@@ -169,7 +186,13 @@ if __name__ == "__main__":
             torchvision.transforms.Normalize(mean=.5, std=.5),
         ])
 
-        
+    if _SELECTED_MODEL == 4:
+        #https://docs.pytorch.org/vision/main/models/generated/torchvision.models.vgg19.html
+        teacher = torchvision.models.vgg19(pretrained=True).to(device).eval()
+        norm = torchvision.transforms.Compose([
+            torchvision.transforms.Resize((224, 224)),
+            torchvision.transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        ])
 
 
     loss_func = RepAlignLoss(teacher, norm, device, randomize_pairs=True, use_weight=False, verbose=True).to(device)
