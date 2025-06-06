@@ -5,12 +5,11 @@ import torchvision
 import math
 
 class RepAlignLoss(torch.nn.Module):
-    def __init__(self, sel_model, normalize, device=None, randomize_pairs=True, use_weight=False, verbose=True):
+    def __init__(self, sel_model, normalize, device=None, use_weight=False, verbose=True):
         super().__init__()
         self.model = sel_model
         self.normalize = normalize
         self.use_weight = use_weight
-        self.randomize_pairs = randomize_pairs
         self.device = device
         self.generator = torch.Generator(device=device)
 
@@ -25,6 +24,9 @@ class RepAlignLoss(torch.nn.Module):
             param.requires_grad_(False)
 
         count = 0
+
+        if verbose:
+            print("Using Weights: ", self.use_weight)
 
         #Can also use more layers or all of them
 
@@ -55,67 +57,28 @@ class RepAlignLoss(torch.nn.Module):
         Y_VAL = self.activations
         return Y_VAL
 
-    def HandleTensor(self, x, head=2):
-        pad = (head - (x.shape[-1] % head)) % head
-        x = F.pad(x, (0, pad))
-        x = x.reshape(x.size(0), -1, head)
-        return x
 
-    def l2_normalize_groups(self, x: torch.Tensor, y: torch.Tensor, eps: float = 1e-8) -> tuple[torch.Tensor, torch.Tensor]:
-                      
-        # Calculate sum of squares for elements in x and y per group
-        # x_sq_sum and y_sq_sum will have shape (num_groups, 1)
-        x_sq_sum = x.pow(2).sum(dim=-1, keepdim=True)
-        y_sq_sum = y.pow(2).sum(dim=-1, keepdim=True)
-    
-        # Total sum of squares for the 4 elements in each group
-        group_sum_sq = x_sq_sum + y_sq_sum
-        group_norm = torch.sqrt(group_sum_sq)
-    
-        x_normalized = x / (group_norm + eps)
-        y_normalized = y / (group_norm + eps)
-    
-        return x_normalized, y_normalized
-    
-    def CalculateLoss(self, x, y, heads):
-        x = self.HandleTensor(x, heads)
-        y = self.HandleTensor(y, heads)
-
-        #x = nn.functional.softmax(x, dim=-1)
-        #y = nn.functional.softmax(y, dim=-1)
-        #loss = nn.functional.mse_loss(x, y.detach(), reduction="none")
-        #loss = (1 - torch.nn.functional.cosine_similarity(x, y.detach(), dim=-1)).pow(2)
+    def softmax_group(self, x: torch.Tensor, y: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        max_combined = torch.maximum(x, y)
         
-        #x = F.normalize(x, dim=-1)
-        #y = F.normalize(y, dim=-1)
-
-        x, y = self.l2_normalize_groups(x, y)
-
-        loss = nn.functional.mse_loss(x, y.detach(), reduction="none")
-
+        x_shifted = x - max_combined
+        y_shifted = y - max_combined
+        
+        exp_x = torch.exp(x_shifted)
+        exp_y = torch.exp(y_shifted)
+        
+        sum_exp = exp_x + exp_y
+        
+        x_softmax = exp_x / sum_exp
+        y_softmax = exp_y / sum_exp
+        
+        return x_softmax, y_softmax
+    
+    def CalculateLoss(self, x, y):
+        x, y = self.softmax_group(x, y)
+        loss = nn.functional.l1_loss(x, y.detach(), reduction="none")
         return loss.sum(), loss.numel()
         
-
-    def HandleData(self, x, y):
-        loss = 0
-        elements = 0
-
-        if x.ndim > 3:
-            x = x.view(x.size(0), x.size(1), -1)
-            y = y.view(y.size(0), y.size(1), -1)
-            
-        if self.randomize_pairs:
-            perm = torch.randperm(x.size(-1), device=x.device, generator=self.generator)
-            x = x[...,  perm]
-            y = y[...,  perm]
-
-
-        l, e = self.CalculateLoss(x, y, 2)
-
-        loss += l 
-        elements += e
-        return loss, elements
-
         
     def forward(self, X_VAL, Y_VAL):
         loss = 0
@@ -128,12 +91,7 @@ class RepAlignLoss(torch.nn.Module):
         total_weight = sum(weights)
 
         for i in range(len(X_VAL)):
-            #Eval mode, make generator deterministic.
-            if not X_VAL[i].requires_grad or not torch.is_grad_enabled():
-                self.generator.manual_seed(42)
-                
-
-            l, s  =  self.HandleData(X_VAL[i], Y_VAL[i]) 
+            l, s  =  self.CalculateLoss(X_VAL[i], Y_VAL[i]) 
             
             #Optional weight
             if self.use_weight:
@@ -148,7 +106,7 @@ class RepAlignLoss(torch.nn.Module):
 
 
 _ALL_MODELS = ["dinov2_vits14_reg", "webssl-dino300m-full2b-224", "PE-Core-B16-224", "VGG19"]
-_SELECTED_MODEL = 0
+_SELECTED_MODEL = 4
 
 if __name__ == "__main__":
     device = torch.device("cpu")
@@ -195,7 +153,7 @@ if __name__ == "__main__":
         ])
 
 
-    loss_func = RepAlignLoss(teacher, norm, device, randomize_pairs=True, use_weight=False, verbose=True).to(device)
+    loss_func = RepAlignLoss(teacher, norm, device, use_weight=False, verbose=True).to(device)
 
     #Since the teacher is dino V2, we need to feed it tensors [B,3,H,W] tensor with 14X14 patches.
     model_output = torch.randn(1, 3, 140, 140, requires_grad=True).to(device)
@@ -206,15 +164,6 @@ if __name__ == "__main__":
     with torch.no_grad():
         gt_data = loss_func.MakeData(gt)
 
-    #Calculate loss
-    #Training with random pairs make the loss change with the same data.
-    for _ in range(3):
-        loss = loss_func(output_data, gt_data)
-        print("Training with random pairs:", loss.item())
-    
-    
-    #Eval with random pairs. Loss does not change.
-    for _ in range(3):
-        with torch.no_grad():
-            loss = loss_func(output_data, gt_data)
-        print("Eval with random pairs:", loss.item())
+    loss = loss_func(output_data, gt_data)
+    print("Training Loss:", loss.item())
+        
