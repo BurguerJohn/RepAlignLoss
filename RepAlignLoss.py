@@ -76,7 +76,7 @@ class RepAlignLoss(torch.nn.Module):
     
     def CalculateLoss(self, x, y):
         x, y = self.softmax_group(x, y)
-        loss = nn.functional.l1_loss(x, y.detach(), reduction="none")
+        loss = nn.functional.mse_loss(x, y.detach(), reduction="none")
         return loss.sum(), loss.numel()
         
         
