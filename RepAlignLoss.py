@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 import math
+import warnings
 
 class RepAlignLoss(torch.nn.Module):
     def __init__(self, sel_model, normalize, device=None, use_weight=False, verbose=True):
@@ -59,6 +60,12 @@ class RepAlignLoss(torch.nn.Module):
 
 
     def softmax_group(self, x: torch.Tensor, y: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        
+
+        norm = torch.hypot(x, y).clamp(min=torch.finfo(x.dtype).tiny)
+        x = x / norm
+        y = y / norm
+
         max_combined = torch.maximum(x, y)
         
         x_shifted = x - max_combined
@@ -76,7 +83,11 @@ class RepAlignLoss(torch.nn.Module):
     
     def CalculateLoss(self, x, y):
         x, y = self.softmax_group(x, y)
-        loss = nn.functional.mse_loss(x, y.detach(), reduction="none")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            #loss = nn.functional.l1_loss(x,  torch.tensor(0.5, device=x.device), reduction="none")
+            loss = nn.functional.mse_loss(x,  torch.tensor(0.5, device=x.device), reduction="none")
+        
         return loss.sum(), loss.numel()
         
         
