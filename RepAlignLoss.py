@@ -61,25 +61,15 @@ class RepAlignLoss(torch.nn.Module):
 
     def softmax_group(self, x: torch.Tensor, y: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         
+        x = torch.sigmoid(x)
+        y = torch.sigmoid(y)
 
         norm = torch.hypot(x, y).clamp(min=torch.finfo(x.dtype).tiny)
+
         x = x / norm
         y = y / norm
 
-        max_combined = torch.maximum(x, y)
-        
-        x_shifted = x - max_combined
-        y_shifted = y - max_combined
-        
-        exp_x = torch.exp(x_shifted)
-        exp_y = torch.exp(y_shifted)
-        
-        sum_exp = exp_x + exp_y
-        
-        x_softmax = exp_x / sum_exp
-        y_softmax = exp_y / sum_exp
-        
-        return x_softmax, y_softmax
+        return x ** 2, y ** 2
     
     def CalculateLoss(self, x, y):
         x, y = self.softmax_group(x, y)
