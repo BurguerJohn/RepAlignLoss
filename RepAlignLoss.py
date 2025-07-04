@@ -59,24 +59,15 @@ class RepAlignLoss(torch.nn.Module):
         return Y_VAL
 
 
-    def softmax_group(self, x: torch.Tensor, y: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        
-        x = torch.sigmoid(x)
-        y = torch.sigmoid(y)
 
-        norm = torch.hypot(x, y).clamp(min=torch.finfo(x.dtype).tiny)
-
-        x = x / norm
-        y = y / norm
-
-        return x ** 2, y ** 2
-    
     def CalculateLoss(self, x, y):
-        x, y = self.softmax_group(x, y)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            #loss = nn.functional.l1_loss(x,  torch.tensor(0.5, device=x.device), reduction="none")
-            loss = nn.functional.mse_loss(x,  torch.tensor(0.5, device=x.device), reduction="none")
+        x = x.view(x.size(0), x.size(1),  -1)
+        y = y.view(y.size(0), y.size(1),  -1)
+
+        x = torch.nn.functional.normalize(x, p=2.0, dim=-1)
+        y = torch.nn.functional.normalize(y, p=2.0, dim=-1)
+
+        loss = nn.functional.mse_loss(x,  y, reduction="none")
         
         return loss.sum(), loss.numel()
         
