@@ -148,9 +148,22 @@ if __name__ == "__main__":
     loss_func = RepAlignLoss(teacher, norm, device, use_weight=False, verbose=True).to(device)
 
     #Since the teacher is dino V2, we need to feed it tensors [B,3,H,W] tensor with 14X14 patches.
-    model_output = torch.randn(1, 3, 140, 140, requires_grad=True).to(device)
+    model_input = torch.randn(1, 3, 140, 140, requires_grad=True).to(device)
+    training_model = torch.nn.Sequential(
+        nn.Conv2d(3, 3, 3, 1, 1)
+    )
+    
     gt = torch.randn(1, 3, 140, 140).to(device)
 
+    try:
+        #Custom Optimizer that may work better for teacher/student learning
+        from TTAdamW import TTAdamW
+        optimizer = TTAdamW(training_model.parameters(), 1e-3)
+        print(optimizer)
+    except ImportError:
+        pass
+    
+    model_output = training_model(model_input)
     #Feed both tensors to DinoV2 and store each layer data.
     output_data = loss_func.MakeData(model_output)
     with torch.no_grad():
