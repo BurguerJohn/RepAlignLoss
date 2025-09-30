@@ -52,25 +52,26 @@ class RepAlignLoss(torch.nn.Module):
 
 
     def MakeData(self, Y):
-        Y = self.normalize(Y)
+        if self.normalize != None:
+            Y = self.normalize(Y)
         self.activations = []
         self.model(Y)
         Y_VAL = self.activations
         return Y_VAL
 
-
-
+    
     def CalculateLoss(self, x, y):
         x = x.view(x.size(0), x.size(1),  -1)
         y = y.view(y.size(0), y.size(1),  -1)
 
-        x = torch.nn.functional.normalize(x, p=2.0, dim=-1)
-        y = torch.nn.functional.normalize(y, p=2.0, dim=-1)
+        x = x / (x.pow(2).mean(dim=-1, keepdim=True).sqrt() + 1e-8)
+        y = y / (y.pow(2).mean(dim=-1, keepdim=True).sqrt() + 1e-8)
 
         loss = nn.functional.mse_loss(x,  y, reduction="none")
         
         return loss.sum(), loss.numel()
-        
+    
+    
         
     def forward(self, X_VAL, Y_VAL):
         loss = 0
@@ -97,8 +98,10 @@ class RepAlignLoss(torch.nn.Module):
 
 
 
+
 _ALL_MODELS = ["dinov2_vits14_reg", "webssl-dino300m-full2b-224", "PE-Core-B16-224", "VGG19"]
 _SELECTED_MODEL = 4
+_PLOT_LAYERS = True
 
 if __name__ == "__main__":
     device = torch.device("cpu")
@@ -168,6 +171,13 @@ if __name__ == "__main__":
     output_data = loss_func.MakeData(model_output)
     with torch.no_grad():
         gt_data = loss_func.MakeData(gt)
+
+    if _PLOT_LAYERS:
+        from Plotter import plot_layer_loss_and_numel
+        import matplotlib.pyplot as plt
+        fig, (ax_loss, ax_numel), data = plot_layer_loss_and_numel(loss_func, output_data, gt_data, log_numel=True)
+        plt.show()
+
 
     loss = loss_func(output_data, gt_data)
     print("Training Loss:", loss.item())

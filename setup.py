@@ -10,7 +10,7 @@ def read_readme():
     return ""
 
 setup(
-    name="repalignloss",
+    name="RepAlignLoss",
     version="0.1.0",
     description="RepAlignLoss: a PyTorch loss aligning internal representations",
     long_description=read_readme(),
@@ -24,7 +24,6 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    # Since you only have two modules, you can list them as py_modules
     py_modules=["RepAlignLoss", "TTAdamW"],
     install_requires=[
         "torch", 
