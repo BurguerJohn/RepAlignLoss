@@ -52,7 +52,7 @@ class RepAlignLoss(torch.nn.Module):
 
 
     def MakeData(self, Y):
-        if self.normalize != None:
+        if self.normalize is not None:
             Y = self.normalize(Y)
         self.activations = []
         self.model(Y)
