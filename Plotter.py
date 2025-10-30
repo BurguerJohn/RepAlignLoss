@@ -38,6 +38,7 @@ def plot_layer_loss_and_numel(
     ax_loss.set_xlabel("Layer index")
     ax_loss.set_ylabel("Loss (sum)")
 
+    
     ax_numel = ax_loss.twinx()
     ln2, = ax_numel.plot(layers, per_layer_numel, marker="s", linestyle="--", label="Numel", color="tab:green")
     ax_numel.set_ylabel("Numel")

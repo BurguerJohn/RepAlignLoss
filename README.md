@@ -1,224 +1,135 @@
-# RepAlignLoss (Representation Alignment Loss)
+# RepAlignLoss
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+RepAlignLoss is a PyTorch toolbox for **representation alignment losses**. It lets you compare a student model's outputs to a ground-truth target in the feature space of a frozen, pretrained teacher network. The project now ships with utilities to capture teacher activations, visualize per-layer contributions, and experiment with a weight-norm-aware optimizer tailored to distillation-style training.
 
-`RepAlignLoss` is a PyTorch loss function designed for guiding the training of a 'student' model by aligning the feature representations *of its output* with those of a *ground truth* image, as perceived by a pre-trained 'teacher' model. It encourages the student to generate outputs that are perceptually similar to the target by mimicking the internal activations of powerful foundation models (like DINOv2, VGG19, ResNet, etc.) when they process the student's output versus the target.
+## Overview
+- Extract intermediate activations from a frozen teacher (DINOv2, VGG, CLIP-style encoders, etc.) while keeping gradients flowing only through the student.
+- Align representations by normalizing each layer's activations and measuring their mean-squared error.
+- Optionally weight deep layers more heavily, or inspect layer-wise losses to refine which features you care about.
+- Use the standalone example script to bootstrap experiments or as a reference for integrating into your own training loop.
 
-This approach falls under the umbrella of **feature-level knowledge distillation** or **perceptual loss**, specifically applied by comparing the teacher's interpretation of the student's output and the ground truth.
-
-## Key Features
-
-*   **Teacher-Student Framework:** Leverages a frozen, pre-trained model (teacher) to provide perceptual guidance signals.
-*   **Layer-wise Activation Matching:** Uses PyTorch forward hooks to extract intermediate activations from specified layers (default: `nn.Conv2d`, `nn.Linear`) of the teacher model.
-*   **Output-Target Alignment:** Calculates loss by comparing the teacher's activations produced when processing the *student's output* versus the teacher's activations produced when processing the *ground truth* image.
-*   **Normalized Feature Comparison:** Uses L2 normalization followed by MSE loss for robust similarity measurement between activation vectors.
-*   **Flexible:** Allows easy swapping of teacher models and configuration of which layer types to use for comparison. Requires providing an appropriate normalization transform matching the teacher's pre-training.
-
-## How it Works
-
-1.  **Teacher Model:** A pre-trained model (e.g., `dinov2_vits14_reg`) is loaded, set to evaluation mode (`eval()`), and its parameters are frozen (`requires_grad_(False)`).
-2.  **Activation Hooking:** Forward hooks are registered on selected layers (by default `nn.Conv2d` and `nn.Linear`) within the teacher model. These hooks capture the output activations of these layers during a forward pass.
-3.  **Activation Extraction (`MakeData` method):**
-    *   Takes an input tensor (either the student model's output or the ground truth image).
-    *   Applies the necessary normalization (`self.normalize`) expected by the teacher model.
-    *   Performs a forward pass through the *teacher* model (`self.model(Y)`).
-    *   The hooks capture the activations from the selected layers into a list (`self.activations`).
-    *   This method is called *twice* per training step: once for the student's output and once for the ground truth target.
-4.  **Loss Calculation (`forward` method):**
-    *   Takes two lists of activation tensors: `X_VAL` (activations from teacher processing the *student's output*) and `Y_VAL` (activations from teacher processing the *ground truth*).
-    *   Iterates through the corresponding activation tensors layer by layer from `X_VAL` and `Y_VAL`.
-    *   For each pair of activation tensors (`x`, `y`):
-        *   Flattens spatial/sequence dimensions: `(B, C, H, W)` -> `(B, C, H*W)`
-        *   Applies L2 normalization along the last dimension (feature dimension)
-        *   Calculates Mean Squared Error (MSE) loss between the normalized vectors
-        *   Accumulates the loss and element count
-    *   Optional weighting based on layer depth can be applied (`use_weight=True`), giving higher weights to deeper layers.
-    *   The final loss is the total loss divided by the total number of elements across all layers.
-
-### Feature Comparison Method
-
-The current implementation uses a straightforward approach for comparing activations between student output and ground truth:
-
-1.  **Flatten:** Spatial dimensions (if any) are flattened: `(Batch, Channels, Height, Width)` -> `(Batch, Channels, Height*Width)`
-2.  **Normalize:** L2 normalization is applied along the last dimension (feature dimension), ensuring unit norm vectors
-3.  **Compare:** MSE loss is calculated between the normalized activation vectors from student output and ground truth
-4.  **Aggregate:** Losses from all layers are summed and divided by the total number of elements for averaging
-
-This method ensures that the student model learns to produce outputs whose internal representations (as perceived by the teacher) are similar to those of the ground truth, focusing on the direction/pattern of activations rather than their magnitudes.
-
-## Dependencies
-
-*   PyTorch (`torch`)
-*   TorchVision (`torchvision`) - for transforms and models
-*   Access to `torch.hub` for loading models like DINOv2 (`facebookresearch/dinov2`)
-*   Optional: `transformers` for HuggingFace models
-*   Optional: Custom optimizers like `TTAdamW` (included in the repository)
-
-You can typically install the core dependencies with:
-```bash
-pip install torch torchvision transformers
-```
+## What's Included
+- `RepAlignLoss.py`: main loss implementation with a demonstration entrypoint (set `_SELECTED_MODEL` to pick a teacher and `_PLOT_LAYERS` to enable plotting).
+- `Optimizer.py`: `WNGradW`, a weight-norm-scaled optimizer with gradient centralization, momentum, and trust-ratio style scaling.
+- `Plotter.py`: utilities to chart per-layer losses and activation sizes so you can see which layers dominate the objective.
+- `setup.py`: minimal packaging script that reads this README as the long description.
 
 ## Installation
 
-1.  Clone the repository:
-    ```bash
-    git clone https://github.com/BurguerJohn/RepAlignLoss
-    cd RepAlignLoss
-    ```
+You only need PyTorch to instantiate the loss, but different teachers add extra requirements:
 
-## Usage
+```bash
+pip install torch torchvision
+# Optional extras when needed
+pip install transformers matplotlib
+```
+
+When working locally inside this repository you can install it in editable mode:
+
+```bash
+pip install -e .
+```
+
+> **Tip:** Some teacher choices (e.g. Perception Encoder models) expect additional repositories to be present. Check the comments around `_SELECTED_MODEL` inside `RepAlignLoss.py` before running the demo.
+
+## Quick Start
 
 ```python
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import torchvision.transforms as transforms
+import torchvision.transforms as T
+from transformers import Dinov2Model
 from RepAlignLoss import RepAlignLoss
 
-# --- Setup ---
+# 1. Load your frozen teacher and matching preprocessing.
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+teacher = Dinov2Model.from_pretrained("facebook/webssl-dino300m-full2b-224").to(device).eval()
+normalize = T.Compose([
+    T.Resize((224, 224)),
+    T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+])
 
-# 1. Load your Student Model
-student_model = nn.Sequential(
-    nn.Conv2d(3, 64, 3, 1, 1),
-    nn.ReLU(),
-    nn.Conv2d(64, 3, 3, 1, 1)
+# 2. Instantiate the loss. By default it hooks nn.Conv2d and nn.Linear layers.
+rep_loss = RepAlignLoss(teacher, normalize, device=device, use_weight=True)
+
+student = torch.nn.Conv2d(3, 3, kernel_size=3, padding=1).to(device)
+optimizer = torch.optim.Adam(student.parameters(), lr=1e-3)
+
+# 3. During training, create activation banks for the student output and the target.
+targets = torch.randn(4, 3, 140, 140, device=device)          # your ground truth
+inputs = torch.randn(4, 3, 140, 140, device=device)           # data for the student
+
+student_out = student(inputs)
+student_acts = rep_loss.MakeData(student_out)                 # gradients enabled
+
+with torch.no_grad():
+    target_acts = rep_loss.MakeData(targets)                  # cache teacher features
+
+loss = rep_loss(student_acts, target_acts)
+optimizer.zero_grad()
+loss.backward()
+optimizer.step()
+```
+
+### Customizing the Hooks
+- Set `use_weight=True` when constructing `RepAlignLoss` to linearly increase layer weights with depth.
+- Edit the `sel_module` list in `RepAlignLoss.__init__` if you want to hook other layer types (e.g. attention blocks).
+- Call `MakeData` inside a `with torch.no_grad()` block when you do not need gradients (e.g. for the target tensor) to save memory.
+
+## Inspect Layer Contributions
+
+After collecting activations you can visualize which layers dominate the objective:
+
+```python
+from Plotter import plot_layer_loss_and_numel
+import matplotlib.pyplot as plt
+
+fig, (ax_loss, ax_numel), data = plot_layer_loss_and_numel(
+    rep_loss, student_acts, target_acts, log_numel=True
 )
-student_model.to(device)
-
-# 2. Load the Teacher Model and Define Normalization
-teacher = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg').to(device).eval()
-
-# Normalization specific to the teacher model
-normalize = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-])
-
-# 3. Instantiate the RepAlignLoss
-loss_func = RepAlignLoss(
-    sel_model=teacher,
-    normalize=normalize,
-    device=device,
-    use_weight=False,  # Optional: Use layer weighting
-    verbose=True       # Set to False during training loops
-).to(device)
-
-# 4. Setup Optimizer
-optimizer = optim.Adam(student_model.parameters(), lr=1e-4)
-
-# --- Training Loop Example ---
-num_epochs = 10
-dataloader = ...  # Your data loader providing (input_data, ground_truth_image) pairs
-
-for epoch in range(num_epochs):
-    student_model.train()
-    for batch_idx, (input_data, ground_truth_image) in enumerate(dataloader):
-        input_data = input_data.to(device)
-        ground_truth_image = ground_truth_image.to(device)
-
-        # Forward pass through student model
-        student_output = student_model(input_data)
-
-        # Get activations from teacher model
-        # Process ground truth first (no gradients needed)
-        with torch.no_grad():
-            gt_activations = loss_func.MakeData(ground_truth_image)
-
-        # Process student output (gradients needed for backprop)
-        student_activations = loss_func.MakeData(student_output)
-
-        # Calculate RepAlignLoss
-        rep_align_loss = loss_func(student_activations, gt_activations)
-
-        # Backpropagation
-        optimizer.zero_grad()
-        rep_align_loss.backward()
-        optimizer.step()
-
-        if batch_idx % 10 == 0:
-            print(f"Epoch {epoch}, Batch {batch_idx}, Loss: {rep_align_loss.item():.4f}")
+plt.show()
 ```
 
-## Supported Teacher Models
+The helper returns both the Matplotlib figure/axes and a plain Python dictionary containing raw per-layer loss and element counts, making it easy to log the statistics elsewhere.
 
-The repository includes examples for several pre-trained teacher models:
+## Weight-Norm Gradient Optimizer (`Optimizer.WNGradW`)
 
-### DINOv2 (Default)
-```python
-teacher = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg')
-normalize = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-])
-```
-
-### VGG19
-```python
-teacher = torchvision.models.vgg19(pretrained=True)
-normalize = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-])
-```
-
-### HuggingFace DINOv2
-```python
-from transformers import Dinov2Model
-teacher = Dinov2Model.from_pretrained('facebook/webssl-dino300m-full2b-224')
-normalize = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-])
-```
-
-## Configuration Parameters
-
-### `RepAlignLoss.__init__`
-
-*   `sel_model` (torch.nn.Module): The pre-trained, frozen teacher model.
-*   `normalize` (callable): A torchvision transform that preprocesses input tensors to match the teacher model's requirements.
-*   `device` (torch.device, optional): The device where calculations should happen. Defaults to `None`.
-*   `use_weight` (bool, optional): If `True`, applies linear weighting to deeper layers. Defaults to `False`.
-*   `verbose` (bool, optional): If `True`, prints hooked layers during initialization. Defaults to `True`.
-
-## TTAdamW Optimizer
-
-The repository includes `TTAdamW`, an enhanced optimizer combining:
-- AdamW with decoupled weight decay
-- Two-timescale sensitivity gating
-- Optional LAMB-style trust ratio
-- Optional gradient centralization
+`WNGradW` is a normalization-aware optimizer designed with representation alignment in mind:
+- Gradient centralization keeps channels centred before measuring their norms.
+- Optional momentum on the direction vector adds stability without altering gradients in-place.
+- Trust-ratio style scaling uses the running norm of each parameter block; flip `inverse_trust` to switch between inverse scaling (recommended for distillation) and LARS-like behaviour.
+- Works with any PyTorch module; drop it in place of your usual optimizer:
 
 ```python
-from TTAdamW import TTAdamW
-optimizer = TTAdamW(student_model.parameters(), lr=1e-3)
+from Optimizer import WNGradW
+optimizer = WNGradW(student.parameters(), lr=1e-3, weight_decay=1e-4, beta_m=0.9)
 ```
 
-## Important Notes
+## Demo Script
 
-*   **Memory Usage:** Storing activations from multiple layers can be memory-intensive with large batch sizes.
-*   **Computational Cost:** Two forward passes through the teacher model (student output + ground truth) add overhead.
-*   **Normalization Matching:** The `normalize` transform must exactly match the teacher model's preprocessing requirements.
-*   **Layer Selection:** By default, hooks target `nn.Conv2d` and `nn.Linear` layers. Modify `sel_module` in the code to change this.
-*   **Teacher Model Frozen:** All teacher model parameters have `requires_grad=False` to prevent updates during training.
-
-## Example Run
-
-The `RepAlignLoss.py` file includes a complete example that can be run directly:
+Run the bundled example to see the whole pipeline in action:
 
 ```bash
 python RepAlignLoss.py
 ```
 
-This example:
-1. Creates a simple student model (single Conv2d layer)
-2. Uses VGG19 as the teacher model (controlled by `_SELECTED_MODEL = 4`)
-3. Generates random input and ground truth tensors
-4. Computes the RepAlignLoss and demonstrates the training setup
+Tweak `_SELECTED_MODEL` inside the script to switch between:
+- `0` - DINOv2 via `torch.hub`
+- `1` - Hugging Face DINOv2 (default)
+- `2` - Meta Perception Encoder (requires the external `perception_models` repo)
+- `4` - VGG19 from `torchvision`
+
+Set `_PLOT_LAYERS = True` to pop up the visualization window (requires Matplotlib).
+
+## Practical Notes
+- Teacher parameters are frozen automatically and run in evaluation mode; gradients only flow through the student.
+- Activation banks can be large. Monitor GPU memory, especially with deep teachers and big batches.
+- Ensure the `normalize` transform matches the teacher's expected input distribution (size, mean, and standard deviation).
+- Sparse gradients are not supported by `WNGradW`.
+
+## License
+
+MIT License - see `LICENSE`.
 
 ## Author
 
-**Gabriel Poetsch**  
-Email: griskai.yt@gmail.com
+`Gabriel Poetsch` - griskai.yt@gmail.com

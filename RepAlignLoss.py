@@ -52,44 +52,46 @@ class RepAlignLoss(torch.nn.Module):
 
 
     def MakeData(self, Y):
-        if self.normalize is not None:
-            Y = self.normalize(Y)
+        Y = self.normalize(Y)
         self.activations = []
         self.model(Y)
         Y_VAL = self.activations
         return Y_VAL
 
     
+    
     def CalculateLoss(self, x, y):
         x = x.view(x.size(0), x.size(1),  -1)
         y = y.view(y.size(0), y.size(1),  -1)
 
-        x = x / (x.pow(2).mean(dim=-1, keepdim=True).sqrt() + 1e-8)
-        y = y / (y.pow(2).mean(dim=-1, keepdim=True).sqrt() + 1e-8)
+        with torch.no_grad():
+            x_p = (x.pow(2).mean(dim=-1, keepdim=True).sqrt() + 1e-8)
+            y_p = (y.pow(2).mean(dim=-1, keepdim=True).sqrt() + 1e-8)
+
+        x = x / x_p
+        y = y / y_p
 
         loss = nn.functional.mse_loss(x,  y, reduction="none")
+
+        loss = loss.mean(dim=-1)
         
         return loss.sum(), loss.numel()
-    
     
         
     def forward(self, X_VAL, Y_VAL):
         loss = 0
         elements = 0
         
-        #Improve, no need to calculate each loop.
-        #Other option is use exp weights
-        #weights = [math.exp(i * 0.1) for i in range(len(X_VAL))]
-        weights = [i + 1 for i in range(len(X_VAL))]
-        total_weight = sum(weights)
+        if self.use_weight:
+            n = len(X_VAL)
+            weights = [(i+ 1) / (n+1) for i in range(n)]
 
         for i in range(len(X_VAL)):
             l, s  =  self.CalculateLoss(X_VAL[i], Y_VAL[i]) 
             
             #Optional weight
             if self.use_weight:
-                w = weights[i] / total_weight
-                l = l * w
+                l = l * weights[i]
                 
             loss += l 
             elements += s
@@ -100,7 +102,7 @@ class RepAlignLoss(torch.nn.Module):
 
 
 _ALL_MODELS = ["dinov2_vits14_reg", "webssl-dino300m-full2b-224", "PE-Core-B16-224", "VGG19"]
-_SELECTED_MODEL = 4
+_SELECTED_MODEL = 1
 _PLOT_LAYERS = True
 
 if __name__ == "__main__":
@@ -148,7 +150,7 @@ if __name__ == "__main__":
         ])
 
 
-    loss_func = RepAlignLoss(teacher, norm, device, use_weight=False, verbose=True).to(device)
+    loss_func = RepAlignLoss(teacher, norm, device, use_weight=True, verbose=True).to(device)
 
     #Since the teacher is dino V2, we need to feed it tensors [B,3,H,W] tensor with 14X14 patches.
     model_input = torch.randn(1, 3, 140, 140, requires_grad=True).to(device)
@@ -160,8 +162,8 @@ if __name__ == "__main__":
 
     try:
         #Custom Optimizer that may work better for teacher/student learning
-        from TTAdamW import TTAdamW
-        optimizer = TTAdamW(training_model.parameters(), 1e-3)
+        from Optimizer import WNGradW
+        optimizer = WNGradW(training_model.parameters(), 1e-2)
         print(optimizer)
     except ImportError:
         pass
