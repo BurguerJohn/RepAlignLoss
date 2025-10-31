@@ -50,11 +50,11 @@ class WNGradW(Optimizer):
         weight_decay: float = 1e-3,
         eps: float = 1e-8,
         beta_m: float = 0.0,
-        beta_w: float = 0.99,
+        beta_w: float = 0.0,
         center_grad: bool = True,
         normalize_grad: bool = True,
         inverse_trust: bool = False,
-        bias_correction: bool = True,
+        bias_correction: bool = False,
         max_trust: Optional[float] = None,
     ):
         if lr <= 0.0:
@@ -124,11 +124,13 @@ class WNGradW(Optimizer):
                     if beta_m > 0.0:
                         state["m"] = torch.zeros_like(p, dtype=torch.float32, device=p.device)
                     # EMA of weight^2 in fp32
-                    state["ema_w2"] = torch.zeros_like(p, dtype=torch.float32, device=p.device)
+                    if beta_w > 0.0:
+                        state["ema_w2"] = torch.zeros_like(p, dtype=torch.float32, device=p.device)
 
                 if beta_m > 0.0:
                     m = state["m"]
-                ema_w2 = state["ema_w2"]
+                if beta_w > 0.0:
+                    ema_w2 = state["ema_w2"]
                 state["step"] += 1
                 t = state["step"]
 
@@ -157,14 +159,16 @@ class WNGradW(Optimizer):
                     u = dir_vec
 
                 # Update EMA of weight^2 using current weights (fp32)
-                w_fp32 = p.detach().to(torch.float32)
-                ema_w2.mul_(beta_w).addcmul_(w_fp32, w_fp32, value=1.0 - beta_w)
+                w_fp32 = p.detach().to(torch.float32) ** 2
+                if beta_w > 0.0:
+                    ema_w2.mul_(beta_w).add_(w_fp32, value=1.0 - beta_w)
+                    w_fp32 = ema_w2
 
                 # Per-vector weight scale: sqrt(sum(ema_w2)) ~= ||w||_2 smoothed
                 if reduce_dims is None:
-                    denom = ema_w2.sqrt().clamp_min(eps)
+                    denom = w_fp32.sqrt().clamp_min(eps)
                 else:
-                    denom = ema_w2.sum(dim=reduce_dims, keepdim=True).sqrt_().clamp_min(eps)
+                    denom = w_fp32.sum(dim=reduce_dims, keepdim=True).sqrt_().clamp_min(eps)
 
                 # Bias correction for early steps (optional)
                 if bias_correction:
