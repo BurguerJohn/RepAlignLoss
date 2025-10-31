@@ -65,8 +65,8 @@ class RepAlignLoss(torch.nn.Module):
         y = y.view(y.size(0), y.size(1),  -1)
 
         with torch.no_grad():
-            x_p = (x.pow(2).mean(dim=-1, keepdim=True).sqrt() + 1e-8)
-            y_p = (y.pow(2).mean(dim=-1, keepdim=True).sqrt() + 1e-8)
+            x_p = (x.pow(2).sum(dim=-1, keepdim=True).sqrt() + 1e-8)
+            y_p = (y.pow(2).sum(dim=-1, keepdim=True).sqrt() + 1e-8)
 
         x = x / x_p
         y = y / y_p
