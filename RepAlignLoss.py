@@ -162,7 +162,7 @@ if __name__ == "__main__":
 
     try:
         #Custom Optimizer that may work better for teacher/student learning
-        from Optimizer import WNGradW
+        from RPLOptimizer import WNGradW
         optimizer = WNGradW(training_model.parameters(), 1e-2)
         print(optimizer)
     except ImportError:
