@@ -24,7 +24,7 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    py_modules=["RepAlignLoss", "TTAdamW"],
+    py_modules=["RepAlignLoss", "RPLOptimizer"],
     install_requires=[
         "torch", 
     ],
