@@ -161,7 +161,7 @@ class WNGradW(Optimizer):
                 # Update EMA of weight^2 using current weights (fp32)
                 w_fp32 = p.detach().to(torch.float32) ** 2
                 if beta_w > 0.0:
-                    ema_w2.mul_(beta_w).add_(w_fp32, value=1.0 - beta_w)
+                    ema_w2.mul_(beta_w).add_(w_fp32, alpha=1.0 - beta_w)
                     w_fp32 = ema_w2
 
                 # Per-vector weight scale: sqrt(sum(ema_w2)) ~= ||w||_2 smoothed
